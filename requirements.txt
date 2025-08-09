@@ -1,0 +1,10 @@
+playwright>=1.45.0
+pydantic>=2.5.0
+pydantic-settings>=2.2.1
+loguru>=0.7.2
+tenacity>=8.5.0
+rich>=13.7.1
+aiohttp>=3.9.5
+requests>=2.31.0
+ttkbootstrap>=1.10.1
+
