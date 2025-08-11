@@ -57,6 +57,11 @@ def hf_chat(messages, model: str, temperature: float = 0.9, max_tokens: int = 10
         return "不错！"
 
 
+def generate_comment_with_ai(context_text: str, lang: str = "zh") -> str:
+    """生成AI评论的别名函数，用于向后兼容"""
+    return gen_comment_by_ai(context_text, lang)
+
+
 def gen_comment_by_ai(context_text: str, lang: str = "zh") -> str:
     # 提示词：小红书风格、真实自然、100字以内
     # 生成提示词：优先使用用户配置的模版，默认为小红书风格

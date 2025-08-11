@@ -39,6 +39,7 @@ class ActionConfig(BaseModel):
 
 class AppConfig(BaseModel):
     platform: Literal["twitter", "weibo", "xhs", "zhihu", "toutiao"] = "twitter"
+    browser_type: Literal["chrome", "firefox"] = "chrome"  # 新增浏览器类型选择
     headless: bool = False
     slow_mo_ms: int = 100
     proxy: Optional[str] = None
@@ -56,9 +57,35 @@ class AppConfig(BaseModel):
     def load(path: str | Path = "config/config.json") -> "AppConfig":
         p = Path(path)
         if not p.exists():
+            # 创建默认配置文件
+            default_config = AppConfig()
+            try:
+                default_config.save(path)
+                print(f"已创建默认配置文件: {path}")
+            except Exception as e:
+                print(f"警告：无法创建默认配置文件: {e}")
+            return default_config
+
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            return AppConfig(**data)
+        except json.JSONDecodeError as e:
+            print(f"配置文件格式错误: {e}")
+            print(f"使用默认配置，原文件已备份为: {path}.backup")
+            try:
+                # 备份损坏的配置文件
+                backup_path = Path(str(path) + ".backup")
+                p.rename(backup_path)
+                # 创建新的默认配置
+                default_config = AppConfig()
+                default_config.save(path)
+                return default_config
+            except Exception as backup_e:
+                print(f"备份配置文件失败: {backup_e}")
+                return AppConfig()
+        except Exception as e:
+            print(f"加载配置文件失败: {e}")
             return AppConfig()
-        data = json.loads(p.read_text(encoding="utf-8"))
-        return AppConfig(**data)
 
     def save(self, path: str | Path = "config/config.json") -> None:
         import json as _json
@@ -76,11 +103,22 @@ class AppConfig(BaseModel):
         try:
             import json as _json
             p = Path(path)
-            if p.exists():
-                data = _json.loads(p.read_text(encoding="utf-8"))
-                # 更新当前实例的属性
-                for key, value in data.items():
-                    if hasattr(self, key):
+            if not p.exists():
+                print(f"配置文件不存在: {path}")
+                return False
+
+            data = _json.loads(p.read_text(encoding="utf-8"))
+
+            # 验证配置数据的有效性
+            if not isinstance(data, dict):
+                print(f"配置文件格式错误：根对象必须是字典")
+                return False
+
+            # 更新当前实例的属性
+            updated_count = 0
+            for key, value in data.items():
+                if hasattr(self, key):
+                    try:
                         if key in ["comment", "action"]:
                             # 对于嵌套对象，需要特殊处理
                             current_obj = getattr(self, key)
@@ -88,10 +126,25 @@ class AppConfig(BaseModel):
                                 for sub_key, sub_value in value.items():
                                     if hasattr(current_obj, sub_key):
                                         setattr(current_obj, sub_key, sub_value)
+                                        updated_count += 1
                         else:
                             setattr(self, key, value)
+                            updated_count += 1
+                    except Exception as e:
+                        print(f"更新配置项 {key} 失败: {e}")
+                        continue
+                else:
+                    print(f"忽略未知配置项: {key}")
+
+            print(f"配置重新加载成功，更新了 {updated_count} 个配置项")
+            return True
+
+        except _json.JSONDecodeError as e:
+            print(f"配置文件JSON格式错误: {e}")
+            return False
         except Exception as e:
             print(f"重新加载配置失败: {e}")
+            return False
 
 
 CONFIG = AppConfig.load()

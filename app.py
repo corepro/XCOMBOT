@@ -1,10 +1,26 @@
 from __future__ import annotations
 import argparse
-from src.browser import BrowserManager
-from src.login import login_flow, open_home
-from src.config import CONFIG
-from src.logger import logger
-from src.run_tasks import run_follow_once, run_monitor_loop, like_once, retweet_once, comment_once
+import sys
+import os
+
+# 修复打包环境的路径问题
+if getattr(sys, 'frozen', False):
+    # 如果是打包的exe，设置正确的工作目录
+    application_path = os.path.dirname(sys.executable)
+    os.chdir(application_path)
+
+try:
+    from src.browser import BrowserManager
+    from src.login import login_flow, open_home
+    from src.config import CONFIG
+    from src.logger import logger
+    from src.run_tasks import run_follow_once, run_monitor_loop, like_once, retweet_once, comment_once
+except ImportError as e:
+    print(f"导入模块失败: {e}")
+    print("请确保所有依赖都已正确安装")
+    if getattr(sys, 'frozen', False):
+        input("按回车键退出...")
+    sys.exit(1)
 
 
 
@@ -73,5 +89,28 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        error_msg = f"程序运行出错: {e}"
+        print(error_msg)
+
+        # 尝试写入日志文件
+        try:
+            import traceback
+            from pathlib import Path
+            Path("logs").mkdir(parents=True, exist_ok=True)
+            with open("logs/error.log", "a", encoding="utf-8") as f:
+                f.write(f"\n=== 错误时间: {__import__('datetime').datetime.now()} ===\n")
+                f.write(f"错误信息: {error_msg}\n")
+                f.write(f"详细堆栈:\n{traceback.format_exc()}\n")
+        except:
+            pass
+
+        # 如果是打包环境，等待用户输入
+        if getattr(sys, 'frozen', False):
+            print("\n请检查logs/error.log文件获取详细错误信息")
+            input("按回车键退出...")
+
+        sys.exit(1)
 

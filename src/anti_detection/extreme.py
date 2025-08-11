@@ -405,3 +405,114 @@ class ExtremeAntiDetection(EnhancedAntiDetection):
             "behavior_patterns": self.behavior_patterns
         })
         return stats
+
+    def add_stealth_scripts(self, page: Page) -> None:
+        """添加极限版隐身脚本"""
+        try:
+            # 调用增强版本
+            super().add_stealth_scripts(page)
+
+            # 极限版本的额外隐身脚本
+            extreme_stealth_script = f"""
+            // 极限反检测脚本
+
+            // 完全隐藏自动化特征
+            Object.defineProperty(navigator, 'webdriver', {{
+                get: () => undefined,
+                configurable: true
+            }});
+
+            // 删除自动化相关属性
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+
+            // 伪造Chrome运行时
+            window.chrome = {{
+                app: {{
+                    isInstalled: false,
+                }},
+                webstore: {{
+                    onInstallStageChanged: {{}},
+                    onDownloadProgress: {{}},
+                }},
+                runtime: {{
+                    PlatformOs: {{
+                        MAC: 'mac',
+                        WIN: 'win',
+                        ANDROID: 'android',
+                        CROS: 'cros',
+                        LINUX: 'linux',
+                        OPENBSD: 'openbsd',
+                    }},
+                    PlatformArch: {{
+                        ARM: 'arm',
+                        X86_32: 'x86-32',
+                        X86_64: 'x86-64',
+                    }},
+                    PlatformNaclArch: {{
+                        ARM: 'arm',
+                        X86_32: 'x86-32',
+                        X86_64: 'x86-64',
+                    }},
+                    RequestUpdateCheckStatus: {{
+                        THROTTLED: 'throttled',
+                        NO_UPDATE: 'no_update',
+                        UPDATE_AVAILABLE: 'update_available',
+                    }},
+                    OnInstalledReason: {{
+                        INSTALL: 'install',
+                        UPDATE: 'update',
+                        CHROME_UPDATE: 'chrome_update',
+                        SHARED_MODULE_UPDATE: 'shared_module_update',
+                    }},
+                    OnRestartRequiredReason: {{
+                        APP_UPDATE: 'app_update',
+                        OS_UPDATE: 'os_update',
+                        PERIODIC: 'periodic',
+                    }},
+                }},
+            }};
+
+            // 伪造权限API
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (parameters) => (
+                parameters.name === 'notifications' ?
+                    Promise.resolve({{ state: Notification.permission }}) :
+                    originalQuery(parameters)
+            );
+
+            // 随机化硬件并发数
+            Object.defineProperty(navigator, 'hardwareConcurrency', {{
+                get: () => {random.choice([2, 4, 8, 12, 16])},
+            }});
+
+            // 随机化内存信息
+            Object.defineProperty(navigator, 'deviceMemory', {{
+                get: () => {random.choice([2, 4, 8, 16])},
+            }});
+
+            // 伪造插件信息
+            Object.defineProperty(navigator, 'plugins', {{
+                get: () => {{
+                    const plugins = [];
+                    plugins.length = {random.randint(3, 8)};
+                    return plugins;
+                }},
+            }});
+
+            // 随机化语言设置
+            Object.defineProperty(navigator, 'language', {{
+                get: () => '{random.choice(['zh-CN', 'en-US', 'zh-TW'])}',
+            }});
+
+            Object.defineProperty(navigator, 'languages', {{
+                get: () => ['{random.choice(['zh-CN', 'en-US', 'zh-TW'])}', 'en'],
+            }});
+            """
+
+            page.add_init_script(extreme_stealth_script)
+            logger.debug("极限反爬虫: 已添加极限版隐身脚本")
+
+        except Exception as e:
+            logger.warning("极限反爬虫: 添加隐身脚本失败: {}", str(e))

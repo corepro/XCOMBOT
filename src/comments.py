@@ -20,6 +20,29 @@ def load_local_comments() -> List[str]:
     return [l for l in lines if l]
 
 
+def load_comments(file_path: str = None) -> List[str]:
+    """加载评论文件，用于向后兼容"""
+    if file_path is None:
+        return load_local_comments()
+
+    try:
+        path = Path(file_path)
+        if not path.exists():
+            logger.warning("评论文件不存在: {}", file_path)
+            return []
+
+        lines = [l.strip() for l in path.read_text(encoding="utf-8").splitlines()]
+        return [l for l in lines if l]
+    except Exception as e:
+        logger.error("加载评论文件失败: {}", str(e))
+        return []
+
+
+def get_random_comment() -> str:
+    """获取随机评论，用于向后兼容"""
+    return random_comment()
+
+
 def random_comment(context_text: Optional[str] = None) -> str:
     mode = (CONFIG.comment.mode or "local").lower()
     if mode == "ai" and context_text:

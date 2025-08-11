@@ -35,6 +35,33 @@ class BasicAntiDetection:
             
         except Exception as e:
             logger.warning("基础反爬虫: 设置浏览器上下文失败: {}", str(e))
+
+    def add_stealth_scripts(self, page: Page) -> None:
+        """添加隐身脚本（基础版本）"""
+        try:
+            # 基础版本的隐身脚本
+            stealth_script = """
+            // 基础反检测脚本
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined,
+            });
+
+            // 隐藏自动化特征
+            window.chrome = {
+                runtime: {},
+            };
+
+            // 模拟真实浏览器行为
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => [1, 2, 3, 4, 5],
+            });
+            """
+
+            page.add_init_script(stealth_script)
+            logger.debug("基础反爬虫: 已添加隐身脚本")
+
+        except Exception as e:
+            logger.warning("基础反爬虫: 添加隐身脚本失败: {}", str(e))
     
     def setup_page(self, page: Page) -> None:
         """设置页面级别的反爬虫措施"""

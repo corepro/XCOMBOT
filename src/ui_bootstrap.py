@@ -39,9 +39,10 @@ class AppUIBoot:
         self.app.title("XComBot - 控制台")
         self.app.geometry("1200x720")
 
-        # 先创建与顶部相关的变量（平台/模式）
+        # 先创建与顶部相关的变量（平台/模式/浏览器）
         self.var_platform = tb.StringVar(value=getattr(CONFIG, "platform", "twitter"))
         self.var_mode = tb.StringVar(value=CONFIG.comment.mode)
+        self.var_browser = tb.StringVar(value=getattr(CONFIG, "browser_type", "chrome"))
 
         # 顶部导航条（放置 平台/模式 固定位置）
         top = tb.Frame(self.app, padding=(14, 10))
@@ -73,6 +74,22 @@ class AppUIBoot:
 
         tb.Label(top, text="模式:").pack(side=LEFT, padx=(12,4))
         tb.OptionMenu(top, self.var_mode, "local", "ai").pack(side=LEFT)
+
+        # 浏览器选择
+        tb.Label(top, text="浏览器:").pack(side=LEFT, padx=(12,4))
+        browser_menu = tb.OptionMenu(top, self.var_browser, "chrome", "firefox")
+        browser_menu.pack(side=LEFT)
+
+        # 浏览器选择变化时的回调
+        def _on_browser_change(*_):
+            try:
+                selected_browser = self.var_browser.get()
+                CONFIG.browser_type = selected_browser
+                logger.info("已切换到 {} 浏览器", selected_browser.upper())
+            except Exception as e:
+                logger.warning("切换浏览器失败：{}", e)
+
+        self.var_browser.trace("w", _on_browser_change)
         # 占位搜索框
         search = tb.Entry(top, width=28)
         search.insert(0, "搜索…(占位)")
@@ -135,6 +152,12 @@ class AppUIBoot:
         tb.Button(actions_row1, text="赞1次", bootstyle=WARNING, command=lambda: threading.Thread(target=self._run_like_once, daemon=True).start()).pack(side=LEFT, padx=4)
         tb.Button(actions_row1, text="转1次", bootstyle=INFO, command=lambda: threading.Thread(target=self._run_retweet_once, daemon=True).start()).pack(side=LEFT, padx=4)
         tb.Button(actions_row1, text="关1次", bootstyle=SECONDARY, command=lambda: threading.Thread(target=self._run_follow_once, daemon=True).start()).pack(side=LEFT, padx=4)
+
+        # 微博联动测试（评论/点赞/转发/关注 按右侧开关）
+        actions_row_weibo = tb.Frame(card)
+        actions_row_weibo.pack(fill=X, pady=2)
+        tb.Label(actions_row_weibo, text="微博联动:", font=("Segoe UI", 9, "bold")).pack(side=LEFT, padx=4)
+        tb.Button(actions_row_weibo, text="执行一次", bootstyle="secondary-outline", command=lambda: threading.Thread(target=self._run_weibo_joint_once, daemon=True).start()).pack(side=LEFT, padx=2)
 
         # 一次性动作快捷键 - 第二行（小红书专用）
         actions_row2 = tb.Frame(card)
@@ -426,10 +449,54 @@ class AppUIBoot:
 
         # 线程&计数
         self._worker: threading.Thread | None = None
+        self._worker_lock = threading.Lock()  # 线程安全锁
         self._count_cmt = 0
         self._count_rt = 0
 
         self.app.after(200, self._drain)
+
+    def _safe_stop_worker(self, timeout: float = 6.0) -> bool:
+        """安全停止工作线程"""
+        with self._worker_lock:
+            if not self._worker or not self._worker.is_alive():
+                return True
+
+            try:
+                STOP_EVENT.set()
+                logger.info("等待监控线程停止...")
+                self._worker.join(timeout=timeout)
+
+                if self._worker.is_alive():
+                    logger.warning("监控线程在{}秒内未停止", timeout)
+                    return False
+                else:
+                    logger.info("监控线程已停止")
+                    return True
+
+            except Exception as e:
+                logger.error("停止监控线程时出错: {}", str(e))
+                return False
+            finally:
+                STOP_EVENT.clear()
+                self._worker = None
+
+    def _safe_start_worker(self, target_func, thread_name: str = "worker") -> bool:
+        """安全启动工作线程"""
+        with self._worker_lock:
+            # 先停止现有线程
+            if self._worker and self._worker.is_alive():
+                if not self._safe_stop_worker():
+                    logger.error("无法停止现有线程，启动失败")
+                    return False
+
+            try:
+                self._worker = threading.Thread(target=target_func, daemon=True, name=thread_name)
+                self._worker.start()
+                logger.info("已启动{}线程", thread_name)
+                return True
+            except Exception as e:
+                logger.error("启动{}线程失败: {}", thread_name, str(e))
+                return False
 
     def _set_nav_active(self, key: str):
         if self._nav_active == key:
@@ -832,6 +899,18 @@ class AppUIBoot:
         except Exception as e:
             logger.warning("今日头条关注1次失败：{}", e)
 
+    def _run_weibo_joint_once(self):
+        self._apply_runtime_config()
+        try:
+            # 仅在选择微博平台时运行
+            if self.var_platform.get() != 'weibo':
+                logger.warning("微博联动：当前平台不是 Weibo，已忽略。")
+                return
+            from .run_tasks import run_weibo_joint_once
+            run_weibo_joint_once()
+        except Exception as e:
+            logger.warning("微博联动执行失败：{}", e)
+
 
     def _drain(self):
         try:
@@ -854,6 +933,7 @@ class AppUIBoot:
     def _apply_runtime_config(self):
         try:
             CONFIG.platform = self.var_platform.get()
+            CONFIG.browser_type = self.var_browser.get()  # 添加浏览器配置
             CONFIG.comment.mode = self.var_mode.get()
             CONFIG.action.do_comment = bool(self.var_comment.get())
             CONFIG.action.do_retweet = bool(self.var_rt.get())

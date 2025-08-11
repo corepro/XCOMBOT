@@ -258,3 +258,18 @@ def login_flow_toutiao(bm: BrowserManager, timeout_sec: int = 300) -> None:
             last_log = time.time()
         time.sleep(1.0)
     raise TimeoutError("Toutiao 登录等待超时")
+
+
+# 兼容性函数，用于测试
+def login(bm: BrowserManager, timeout_sec: int = 300) -> bool:
+    """兼容性登录函数"""
+    try:
+        login_flow_toutiao(bm, timeout_sec)
+        return True
+    except Exception:
+        return False
+
+
+def check_login_status(page) -> bool:
+    """兼容性登录状态检查函数"""
+    return is_logged_in_toutiao(page)

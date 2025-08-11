@@ -195,6 +195,21 @@ def login_flow_weibo(bm: BrowserManager, timeout_sec: int = 300) -> None:
     raise TimeoutError("Weibo 登录等待超时")
 
 
+# 兼容性函数，用于测试
+def login(bm: BrowserManager, timeout_sec: int = 300) -> bool:
+    """兼容性登录函数"""
+    try:
+        login_flow_weibo(bm, timeout_sec)
+        return True
+    except Exception:
+        return False
+
+
+def check_login_status(page) -> bool:
+    """兼容性登录状态检查函数"""
+    return is_logged_in_weibo(page)
+
+
 def weibo_probe_login_and_comment(bm: BrowserManager, dry_run: bool = True) -> str:
     """开启 Playwright Trace，检查“登录→评论框打开→（可选）提交”流程。
     返回 trace 文件路径。

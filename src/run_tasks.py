@@ -338,6 +338,28 @@ def run_weibo_firstcard_repeat(n: int, do_comment: bool, do_like: bool, do_retwe
         if not keep_open:
             bm.close()
 
+from .weibo import automate_on_post as wb_automate_on_post
+
+def run_weibo_joint_once(keep_open: bool = False):
+    """微博联动一次：根据 CONFIG.action 中的勾选执行 评论/点赞/转发/关注 的组合。
+    返回结果字典，包含本次是否执行各动作和提取到的链接等。
+    """
+    bm = BrowserManager()
+    try:
+        bm.launch(); bm.new_context(use_storage=True)
+        ensure_login_weibo(bm.page, on_logged_in=lambda: bm.save_storage())
+        do_comment = bool(getattr(CONFIG.action, "do_comment", True))
+        do_like = bool(getattr(CONFIG.action, "do_like", True))
+        do_retweet = bool(getattr(CONFIG.action, "do_retweet", False))
+        do_follow = bool(getattr(CONFIG.action, "do_follow", True))
+        res = wb_automate_on_post(bm.page, do_comment=do_comment, do_like=do_like, do_repost=do_retweet, do_follow=do_follow)
+        logger.info("Weibo 联动结果: {}", res)
+        return res
+    finally:
+        if not keep_open:
+            bm.close()
+
+
 
 
 # XHS：完整功能版本（登录→获取内容→评论→点赞→收藏→分享）

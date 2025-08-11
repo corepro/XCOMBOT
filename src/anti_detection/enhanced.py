@@ -382,3 +382,63 @@ class EnhancedAntiDetection(BasicAntiDetection):
             }
         })
         return stats
+
+    def add_stealth_scripts(self, page: Page) -> None:
+        """添加增强版隐身脚本"""
+        try:
+            # 调用基础版本
+            super().add_stealth_scripts(page)
+
+            # 增强版本的额外隐身脚本
+            enhanced_stealth_script = f"""
+            // 增强反检测脚本
+
+            // 随机化Canvas指纹
+            const originalGetContext = HTMLCanvasElement.prototype.getContext;
+            HTMLCanvasElement.prototype.getContext = function(type, attributes) {{
+                const context = originalGetContext.call(this, type, attributes);
+                if (type === '2d') {{
+                    const originalFillText = context.fillText;
+                    context.fillText = function(text, x, y, maxWidth) {{
+                        // 添加微小的随机噪声
+                        const noise = {self.fingerprint_config['canvas_noise']};
+                        return originalFillText.call(this, text, x + noise, y + noise, maxWidth);
+                    }};
+                }}
+                return context;
+            }};
+
+            // 随机化WebGL指纹
+            const originalGetParameter = WebGLRenderingContext.prototype.getParameter;
+            WebGLRenderingContext.prototype.getParameter = function(parameter) {{
+                if (parameter === 37445) {{ // UNMASKED_VENDOR_WEBGL
+                    return 'Intel Inc.';
+                }}
+                if (parameter === 37446) {{ // UNMASKED_RENDERER_WEBGL
+                    return 'Intel Iris OpenGL Engine';
+                }}
+                return originalGetParameter.call(this, parameter);
+            }};
+
+            // 随机化时区
+            const originalGetTimezoneOffset = Date.prototype.getTimezoneOffset;
+            Date.prototype.getTimezoneOffset = function() {{
+                return {self.fingerprint_config.get('timezone_offset', -480)};
+            }};
+
+            // 随机化触摸点数量
+            Object.defineProperty(navigator, 'maxTouchPoints', {{
+                get: () => {self.fingerprint_config['max_touch_points']},
+            }});
+
+            // 随机化平台信息
+            Object.defineProperty(navigator, 'platform', {{
+                get: () => '{self.fingerprint_config['platform']}',
+            }});
+            """
+
+            page.add_init_script(enhanced_stealth_script)
+            logger.debug("增强反爬虫: 已添加增强版隐身脚本")
+
+        except Exception as e:
+            logger.warning("增强反爬虫: 添加隐身脚本失败: {}", str(e))
