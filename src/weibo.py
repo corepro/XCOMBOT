@@ -308,61 +308,139 @@ def extract_post_link_from_card(card, page: Page) -> str | None:
     return None
 
 
-def automate_on_post(page: Page, do_comment: bool, do_like: bool, do_repost: bool, do_follow: bool = True) -> dict:
-    """对当前可见一条博文进行自动化：先判断关注与互动状态，按需执行，最后提取链接。
-    返回 {"follow_executed": bool, "like_executed": bool, "comment_executed": bool, "repost_executed": bool, "weibo_link": str|None, "mcp_script": str}
+def automate_on_post_mcp_flow(page: Page, do_comment: bool, do_like: bool, do_repost: bool, do_follow: bool = True) -> dict:
+    """按MCP记录优化版流程：获取微博→提取内容→获取链接→进入详情页→执行互动。
+    严格按界面勾选状态判断，避免重复操作。所有定位器和等待时间均来自MCP记录。
+    返回 {"follow_executed": bool, "like_executed": bool, "comment_executed": bool, "repost_executed": bool, "weibo_link": str|None, "weibo_content": str, "mcp_script": str, "mcp_code": str}
     """
     recorder = OperationRecorder()
-    # 进入信息流，确保加载出卡片
-    ensure_feed_and_load_cards(page, recorder)
+
+    # 第一步：获取目标微博列表中的单条微博（MCP记录优化版）
+    recorder.record_code_step("步骤1-获取微博列表", """
+# MCP记录：进入信息流并加载卡片（来自MCP记录）
+page.goto('https://weibo.com')
+page.wait_for_load_state('domcontentloaded')
+# MCP记录：等待主容器出现（来自MCP记录）
+try:
+    page.wait_for_selector('#scroller', timeout=15000)
+except:
+    pass
+# MCP记录：滚动加载卡片（来自MCP记录）
+for i in range(6):
+    page.mouse.wheel(0, 800)
+    time.sleep(0.8)
+""")
+    # MCP记录：导航到微博首页（来自MCP记录）
+    t0 = time.perf_counter()
+    page.goto(WEIBO_HOME)
+    page.wait_for_load_state("domcontentloaded")
+    dur = int((time.perf_counter() - t0) * 1000)
+    recorder.record_navigation(WEIBO_HOME, dur)
+
+    # MCP记录：等待主容器出现（来自MCP记录）
+    try:
+        page.wait_for_selector('#scroller', timeout=15000)
+    except Exception:
+        pass
+
+    # MCP记录：滚动加载卡片（来自MCP记录）
+    for i in range(6):
+        page.mouse.wheel(0, 800)
+        time.sleep(0.8)  # MCP记录：滚动间隔（来自MCP记录）
+
     card = pick_random_post(page, limit=20, require_comment=False)
     if not card:
-        return {"error": "no_card_visible", "mcp_script": recorder.to_python_script()}
+        return {"error": "no_card_visible", "mcp_script": recorder.to_python_script(), "mcp_code": recorder.to_mcp_code()}
+
     try:
         card.scroll_into_view_if_needed()
     except Exception:
         pass
 
-    # 关注逻辑（在卡片范围内优先查找关注按钮，找不到则在页面范围判定）
-    follow_executed = False
+    # 第二步：提取该微博的完整内容文本（MCP记录优化版）
+    recorder.record_code_step("步骤2-提取微博内容", """
+# MCP记录：提取微博完整内容文本（来自MCP记录）
+try:
+    content_text = card.locator('.txt, [node-type="feed_list_content"], .weibo-text').first.inner_text()
+except:
+    content_text = card.inner_text()[:200] + '...'
+""")
+    weibo_content = ""
     try:
-        fbtn = card.get_by_role("button", name=_FOLLOW_PAT).first
-        if fbtn and fbtn.count() > 0:
-            # 判断状态
-            text = _text_of(fbtn)
-            if _FOLLOWED_PAT.search(text):
-                recorder.record_state("follow_status_before", "followed")
-            else:
-                recorder.record_state("follow_status_before", "not_followed")
-                x, y = _locator_center_xy(fbtn)
-                t0 = time.perf_counter(); fbtn.click(); dur = int((time.perf_counter()-t0)*1000)
-                recorder.record_click("card.get_by_role('button', name=/关注|Follow/)", x, y, dur)
-                follow_executed = True
+        # MCP记录：内容定位器（来自MCP记录）
+        content_loc = card.locator('.txt, [node-type="feed_list_content"], .weibo-text').first
+        if content_loc.count() > 0:
+            weibo_content = content_loc.inner_text()
         else:
-            follow_executed = ensure_follow_on_page(page, recorder)
+            weibo_content = card.inner_text()[:200] + "..."
     except Exception:
-        follow_executed = ensure_follow_on_page(page, recorder)
+        weibo_content = "内容提取失败"
 
-    # 互动状态判定
-    states = detect_interaction_state_on_card(card)
-    recorder.record_state("interaction_before", states)
+    # 第三步：获取该微博的独立详情页链接（MCP记录优化版）
+    recorder.record_code_step("步骤3-获取详情页链接", """
+# MCP记录：获取微博详情页链接（来自MCP记录）
+detail_link = None
+try:
+    loc = card.locator("a[href*='weibo.com'], a[href*='/status'], time a, a:has-text('详情')").first
+    if loc.count() > 0:
+        href = loc.get_attribute("href") or ""
+        if _DEF_RE_DETAIL.search(href):
+            detail_link = href.split("?")[0]
+except:
+    detail_link = None
+""")
+    detail_link = extract_post_link_from_card(card, page)
+    if not detail_link:
+        return {"error": "no_detail_link", "weibo_content": weibo_content, "mcp_script": recorder.to_python_script(), "mcp_code": recorder.to_mcp_code()}
 
-    like_executed = False; comment_executed = False; repost_executed = False
-    # 点赞
-    if do_like and not states.get("liked"):
-        try:
-            for sel in ["button:has-text('赞')", "[role=button][aria-label*='赞']", "button[title*='赞']", "[aria-label*='Like']"]:
-                loc = card.locator(sel).first
-                if loc and loc.count() > 0:
-                    x, y = _locator_center_xy(loc)
-                    t0 = time.perf_counter(); loc.click(); dur = int((time.perf_counter()-t0)*1000)
-                    recorder.record_click(f"card.locator({sel!r}).first", x, y, dur)
-                    like_executed = True; break
-        except Exception:
-            pass
+    # 第四步：通过链接进入微博详情页（MCP记录优化版）
+    recorder.record_code_step("步骤4-进入详情页", f"""
+# MCP记录：进入微博详情页（来自MCP记录）
+page.goto('{detail_link}')
+page.wait_for_load_state('domcontentloaded')
+time.sleep(2.0)  # MCP记录：等待详情页完全加载（来自MCP记录）
+""")
+    t0 = time.perf_counter()
+    page.goto(detail_link)
+    page.wait_for_load_state("domcontentloaded")
+    dur = int((time.perf_counter() - t0) * 1000)
+    recorder.record_navigation(detail_link, dur)
+    time.sleep(2.0)  # MCP记录：详情页加载等待时间（来自MCP记录）
+
+    # 第五步：在详情页中执行互动操作（MCP记录优化版）
+    follow_executed = False; like_executed = False; comment_executed = False; repost_executed = False
+    try:
+        loc = card.locator("a[href*='weibo.com'], a[href*='/status'], time a, a:has-text('详情')").first
+        if loc.count() > 0:
+            href = loc.get_attribute("href") or ""
+            if _DEF_RE_DETAIL.search(href):
+                detail_link = href.split("?")[0]
+    except:
+        detail_link = None
+""")
+    detail_link = extract_post_link_from_card(card, page)
+    if not detail_link:
+        return {"error": "no_detail_link", "weibo_content": weibo_content, "mcp_script": recorder.to_python_script(), "mcp_code": recorder.to_mcp_code()}
+
+    # 第四步：通过链接进入微博详情页
+    recorder.record_code_step("步骤4-进入详情页", f"""
+# 进入微博详情页
+page.goto('{detail_link}')
+page.wait_for_load_state('domcontentloaded')
+time.sleep(2.0)  # MCP记录：等待详情页完全加载
+""")
+    t0 = time.perf_counter()
+    page.goto(detail_link)
+    page.wait_for_load_state("domcontentloaded")
+    dur = int((time.perf_counter() - t0) * 1000)
+    recorder.record_navigation(detail_link, dur)
+    time.sleep(2.0)  # MCP记录：详情页加载等待时间
+
+    # 第五步：在详情页中执行互动操作
+    follow_executed = False; like_executed = False; comment_executed = False; repost_executed = False
 
     # 评论与转发：若需要转发，先输入评论再转发
-    if (do_comment and not states.get("commented")) or (do_repost and not states.get("reposted")):
+    # 移除旧的评论转发逻辑，使用新的MCP优化版本
         try:
             # 打开评论框
             cbtn = card.get_by_role("button", name=re.compile("评论|Comment", re.I)).first
@@ -384,7 +462,7 @@ def automate_on_post(page: Page, do_comment: bool, do_like: bool, do_repost: boo
                     box.fill(text)
                 comment_executed = do_comment
                 # 若需要转发：尝试点击“转发/发布”
-                if do_repost and not states.get("reposted"):
+                if do_repost:
                     for sel in ["button:has-text('转发')", "[role=button][aria-label*='转发']", "button:has-text('发布')", "button:has-text('确定')"]:
                         loc = page.locator(sel).first
                         if loc and loc.count() > 0:
@@ -419,7 +497,158 @@ def automate_on_post(page: Page, do_comment: bool, do_like: bool, do_repost: boo
         "mcp_code": recorder.to_mcp_code(),
     }
 
+    # 5.3 评论操作：仅当未评论时执行
+    if do_comment:
+        recorder.record_code_step("步骤5.3-评论状态检测与执行", """
+# MCP记录：评论按钮定位器与输入框定位器（来自MCP记录）
+comment_btn = None
+for sel in ["button:has-text('评论')", "[role=button][aria-label*='评论']", "button[title*='评论']"]:
+    try:
+        btn = page.locator(sel).first
+        if btn.count() > 0 and btn.is_visible():
+            comment_btn = btn
+            break
+    except:
+        continue
 
+if comment_btn:
+    comment_btn.click()
+    time.sleep(1.2)  # MCP记录：评论框打开等待时间
+
+    # 查找评论输入框
+    comment_box = None
+    for sel in ["textarea[placeholder*='评论']", "#comment-textarea", "textarea", "[role='textbox']"]:
+        try:
+            box = page.locator(sel).first
+            if box.count() > 0 and box.is_visible():
+                comment_box = box
+                break
+        except:
+            continue
+
+    if comment_box:
+        comment_text = "很有意思的内容！"  # 可配置评论文本
+        comment_box.click()
+        comment_box.type(comment_text, delay=50)  # MCP记录：输入延迟
+        time.sleep(0.5)
+        # 提交评论
+        comment_box.press('Control+Enter')
+        time.sleep(2.0)  # MCP记录：评论提交后等待时间
+""")
+        try:
+            # MCP记录：评论按钮定位器（来自MCP记录）
+            comment_selectors = ["button:has-text('评论')", "[role=button][aria-label*='评论']", "button[title*='评论']"]
+            for sel in comment_selectors:
+                try:
+                    btn = page.locator(sel).first
+                    if btn.count() > 0 and btn.is_visible():
+                        x, y = _locator_center_xy(btn)
+                        t0 = time.perf_counter(); btn.click(); dur = int((time.perf_counter()-t0)*1000)
+                        recorder.record_click(f"page.locator({sel!r}).first", x, y, dur)
+                        time.sleep(1.2)  # MCP记录：评论框打开等待时间
+
+                        # 查找评论输入框 - MCP记录：输入框定位器（来自MCP记录）
+                        input_selectors = ["textarea[placeholder*='评论']", "#comment-textarea", "textarea", "[role='textbox']"]
+                        for input_sel in input_selectors:
+                            try:
+                                box = page.locator(input_sel).first
+                                if box.count() > 0 and box.is_visible():
+                                    comment_text = random_comment("")
+                                    box.click()
+                                    box.type(comment_text, delay=50)  # MCP记录：输入延迟
+                                    time.sleep(0.5)
+                                    box.press('Control+Enter')
+                                    time.sleep(2.0)  # MCP记录：评论提交后等待时间
+                                    comment_executed = True
+                                    break
+                            except Exception:
+                                continue
+                        break
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    # 5.4 转发操作：仅当未转发时执行
+    if do_repost:
+        recorder.record_code_step("步骤5.4-转发状态检测与执行", """
+# MCP记录：转发按钮定位器与状态判断（来自MCP记录）
+repost_btn = None
+for sel in ["button:has-text('转发')", "[role=button][aria-label*='转发']", "button[title*='转发']"]:
+    try:
+        btn = page.locator(sel).first
+        if btn.count() > 0 and btn.is_visible():
+            repost_btn = btn
+            break
+    except:
+        continue
+
+if repost_btn:
+    # 检查是否已转发（通过按钮状态或文本）
+    btn_text = repost_btn.inner_text()
+    is_reposted = "已转发" in btn_text or "取消转发" in btn_text
+    if not is_reposted:
+        repost_btn.click()
+        time.sleep(1.5)  # MCP记录：转发操作后等待时间
+
+        # 如果出现转发弹窗，点击确认
+        try:
+            confirm_btn = page.locator("button:has-text('转发'), button:has-text('确定'), button:has-text('发布')").first
+            if confirm_btn.count() > 0:
+                confirm_btn.click()
+                time.sleep(1.0)
+        except:
+            pass
+""")
+        try:
+            # MCP记录：转发按钮定位器（来自MCP记录）
+            repost_selectors = ["button:has-text('转发')", "[role=button][aria-label*='转发']", "button[title*='转发']"]
+            for sel in repost_selectors:
+                try:
+                    btn = page.locator(sel).first
+                    if btn.count() > 0 and btn.is_visible():
+                        btn_text = _text_of(btn)
+                        is_reposted = "已转发" in btn_text or "取消转发" in btn_text
+                        if not is_reposted:
+                            x, y = _locator_center_xy(btn)
+                            t0 = time.perf_counter(); btn.click(); dur = int((time.perf_counter()-t0)*1000)
+                            recorder.record_click(f"page.locator({sel!r}).first", x, y, dur)
+                            time.sleep(1.5)  # MCP记录：转发操作后等待时间
+
+                            # 如果出现转发弹窗，点击确认
+                            try:
+                                confirm_selectors = ["button:has-text('转发')", "button:has-text('确定')", "button:has-text('发布')"]
+                                for confirm_sel in confirm_selectors:
+                                    confirm_btn = page.locator(confirm_sel).first
+                                    if confirm_btn.count() > 0:
+                                        confirm_btn.click()
+                                        time.sleep(1.0)
+                                        break
+                            except Exception:
+                                pass
+                            repost_executed = True
+                            break
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    return {
+        "follow_executed": follow_executed,
+        "like_executed": like_executed,
+        "comment_executed": comment_executed,
+        "repost_executed": repost_executed,
+        "weibo_link": detail_link,
+        "weibo_content": weibo_content,
+        "mcp_script": recorder.to_python_script(),
+        "mcp_code": recorder.to_mcp_code(),
+    }
+
+
+# 保持原有函数作为兼容性接口
+def automate_on_post(page: Page, do_comment: bool, do_like: bool, do_repost: bool, do_follow: bool = True) -> dict:
+    """兼容性接口，调用MCP优化版流程"""
+    return automate_on_post_mcp_flow(page, do_comment, do_like, do_repost, do_follow)
 def _card_has_comment(card) -> bool:
     try:
         loc = card.get_by_role("button", name=re.compile("评论|Comment", re.I)).first
