@@ -13,7 +13,7 @@ from pathlib import Path
 
 def check_requirements():
     """检查打包环境"""
-    print("🔍 检查打包环境...")
+    print("检查打包环境...")
     
     # 检查Python版本
     python_version = sys.version_info
@@ -26,7 +26,7 @@ def check_requirements():
     # 检查PyInstaller
     try:
         import PyInstaller
-        print(f"✅ PyInstaller版本: {PyInstaller.__version__}")
+        print(f"PyInstaller版本: {PyInstaller.__version__}")
     except ImportError:
         print("❌ PyInstaller未安装，正在安装...")
         subprocess.run([sys.executable, "-m", "pip", "install", "pyinstaller"])
@@ -46,7 +46,7 @@ def check_requirements():
             print(f"❌ 缺少必要文件: {file_path}")
             return False
         else:
-            print(f"✅ 找到文件: {file_path}")
+            print(f"找到文件: {file_path}")
     
     return True
 
@@ -144,7 +144,7 @@ exe = EXE(
 
 def install_dependencies():
     """安装打包依赖"""
-    print("📦 安装打包依赖...")
+    print("安装打包依赖...")
     
     # 安装PyInstaller和其他必要依赖
     dependencies = [
@@ -346,7 +346,7 @@ XComBot/
 或访问项目主页获取帮助。
 
 ---
-版本: 1.0.0
+版本: 2.0.0
 构建时间: ''' + str(Path().cwd()) + '''
 '''
     
@@ -358,7 +358,7 @@ XComBot/
 
 def main():
     """主函数"""
-    print("🚀 XComBot exe打包工具")
+    print("XComBot exe打包工具")
     print("=" * 50)
     
     # 检查环境
@@ -381,7 +381,7 @@ def main():
     create_installer_script()
     create_readme()
     
-    print("\n🎉 打包完成！")
+    print("\n打包完成！")
     print("=" * 50)
     print("📁 输出目录: dist/")
     print("📋 主要文件:")
@@ -402,10 +402,10 @@ if __name__ == "__main__":
         if not success:
             sys.exit(1)
     except KeyboardInterrupt:
-        print("\n\n⚠️ 用户中断操作")
+        print("\n\n用户中断操作")
         sys.exit(1)
     except Exception as e:
-        print(f"\n❌ 发生错误: {e}")
+        print(f"\n发生错误: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

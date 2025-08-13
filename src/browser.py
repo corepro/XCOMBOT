@@ -28,16 +28,69 @@ class BrowserManager:
             if CONFIG.proxy:
                 launch_args["proxy"] = {"server": CONFIG.proxy}
 
-            # 根据配置选择浏览器类型
-            if browser_type == "firefox":
-                self.browser = self._playwright.firefox.launch(**launch_args)
-                logger.debug("Firefox浏览器启动成功")
-            else:  # 默认使用Chrome
-                self.browser = self._playwright.chromium.launch(**launch_args)
-                logger.debug("Chrome浏览器启动成功")
+            # 检查是否在打包环境中运行
+            import sys
+            is_packaged = getattr(sys, 'frozen', False)
+
+            if is_packaged:
+                logger.info("检测到打包环境，尝试使用系统浏览器")
+                # 在打包环境中，尝试使用系统浏览器路径
+                try:
+                    # 尝试使用系统Chrome
+                    import os
+                    possible_chrome_paths = [
+                        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                        r"C:\Users\{}\AppData\Local\Google\Chrome\Application\chrome.exe".format(os.getenv('USERNAME', '')),
+                    ]
+
+                    chrome_path = None
+                    for path in possible_chrome_paths:
+                        if os.path.exists(path):
+                            chrome_path = path
+                            break
+
+                    if chrome_path:
+                        logger.info("找到系统Chrome浏览器: {}", chrome_path)
+                        launch_args["executable_path"] = chrome_path
+                        self.browser = self._playwright.chromium.launch(**launch_args)
+                        logger.info("使用系统Chrome浏览器启动成功")
+                    else:
+                        # 如果没有找到系统Chrome，提示用户
+                        logger.error("未找到系统Chrome浏览器")
+                        logger.error("请安装Chrome浏览器或运行: playwright install")
+                        raise Exception("未找到可用的浏览器")
+
+                except Exception as system_browser_error:
+                    logger.warning("使用系统浏览器失败: {}, 尝试默认方式", system_browser_error)
+                    # 回退到默认方式
+                    if browser_type == "firefox":
+                        self.browser = self._playwright.firefox.launch(**launch_args)
+                        logger.debug("Firefox浏览器启动成功")
+                    else:
+                        self.browser = self._playwright.chromium.launch(**launch_args)
+                        logger.debug("Chrome浏览器启动成功")
+            else:
+                # 开发环境，使用默认方式
+                if browser_type == "firefox":
+                    self.browser = self._playwright.firefox.launch(**launch_args)
+                    logger.debug("Firefox浏览器启动成功")
+                else:  # 默认使用Chrome
+                    self.browser = self._playwright.chromium.launch(**launch_args)
+                    logger.debug("Chrome浏览器启动成功")
 
         except Exception as e:
             logger.error("浏览器启动失败: {}", str(e))
+            # 如果是浏览器不存在的错误，提供用户友好的提示
+            if "Executable doesn't exist" in str(e):
+                logger.error("=" * 60)
+                logger.error("🚨 浏览器驱动未找到！")
+                logger.error("解决方案:")
+                logger.error("1. 确保系统已安装Chrome浏览器")
+                logger.error("2. 或者在命令行运行: playwright install")
+                logger.error("3. 或者重新下载完整版程序")
+                logger.error("=" * 60)
+
             # 清理资源
             if self._playwright:
                 try:

@@ -302,6 +302,19 @@ def run_weibo_random_n_posts(n: int, do_comment: bool, do_like: bool, do_retweet
 from .weibo import like_once as wb_like_once, comment_once as wb_comment_once, retweet_once as wb_retweet_once, comment_and_optionally_repost
 
 def run_weibo_firstcard_repeat(n: int, do_comment: bool, do_like: bool, do_retweet: bool, keep_open: bool = True, on_progress=None):
+    """
+    优化的微博随机模式 - 统一使用备选流程模式
+
+    对随机选择的N条微博执行指定的操作，每次操作一条不同的微博
+
+    Args:
+        n: 要操作的微博数量
+        do_comment: 是否执行评论操作
+        do_like: 是否执行点赞操作
+        do_retweet: 是否执行转发操作
+        keep_open: 是否保持浏览器打开
+        on_progress: 进度回调函数
+    """
     bm = BrowserManager()
     try:
         bm.launch(); bm.new_context(use_storage=True)
@@ -309,11 +322,12 @@ def run_weibo_firstcard_repeat(n: int, do_comment: bool, do_like: bool, do_retwe
         total = max(1, int(n))
         for i in range(total):
             try:
-                open_home_weibo(bm.page)
                 ok_any = False
-                # 操作顺序：评论(可选) → 点赞(可选, 提交前) → 勾选转发(可选) → 一次性提交
-                if do_comment or do_retweet or do_like:
-                    ok_any = bool(comment_and_optionally_repost(bm.page, do_repost=do_retweet, do_like=do_like, back_to_home=False)) or ok_any
+
+                # 统一使用标准化流程模式
+                logger.info("第{}次操作：使用标准化流程模式", i+1)
+                res = wb_automate_on_post(bm.page, do_comment=do_comment, do_like=do_like, do_repost=do_retweet, do_follow=False)
+                ok_any = any([res.get("comment_executed"), res.get("like_executed"), res.get("repost_executed")])
                 if on_progress:
                     try:
                         on_progress(i+1, total)
@@ -352,6 +366,9 @@ def run_weibo_joint_once(keep_open: bool = False):
         do_like = bool(getattr(CONFIG.action, "do_like", True))
         do_retweet = bool(getattr(CONFIG.action, "do_retweet", False))
         do_follow = bool(getattr(CONFIG.action, "do_follow", True))
+
+        # 统一使用标准化备选流程模式
+        logger.info("使用微博标准化流程模式")
         res = wb_automate_on_post(bm.page, do_comment=do_comment, do_like=do_like, do_repost=do_retweet, do_follow=do_follow)
         logger.info("Weibo 联动结果: {}", res)
         return res
@@ -1089,6 +1106,36 @@ def twitter_act_on_url(bm: BrowserManager, url: str, do_like: bool, do_retweet: 
 @with_navigation_protection
 @with_anti_detection("weibo_url_processing")
 def weibo_act_on_url(bm: BrowserManager, url: str, do_like: bool, do_retweet: bool, do_comment: bool, do_collect: bool = False):
+    """
+    优化的微博精准模式 - 统一使用8步流程模式
+
+    对指定URL的微博执行操作，使用统一的8步自动化流程：
+    1. 进入微博详情页
+    2. 提取微博内容
+    3. 点击关注按钮
+    4. 找到并点击评论框
+    5. 根据微博内容生成并输入评论
+    6. 点击"同时转发"按钮
+    7. 点击点赞按钮
+    8. 点击评论提交按钮完成整个流程
+
+    技术特性：
+    - 使用精确XPath选择器（最高优先级）
+    - 标准化操作间隔时间（1-2.5秒）
+    - Ctrl+Enter快捷键优先提交评论
+    - 智能降级和错误处理机制
+
+    Args:
+        bm: 浏览器管理器
+        url: 微博URL
+        do_like: 是否点赞
+        do_retweet: 是否转发（作为评论的同时转发选项）
+        do_comment: 是否评论
+        do_collect: 是否收藏
+
+    Returns:
+        bool: 操作是否成功
+    """
     start_time = time.time()
     logger.info("Weibo精准模式: [{}] 开始处理URL: {}", time.strftime("%H:%M:%S"), url)
     logger.info("Weibo精准模式: [{}] 操作配置 - 评论:{} 点赞:{} 转发:{} 收藏:{}",
@@ -1116,181 +1163,43 @@ def weibo_act_on_url(bm: BrowserManager, url: str, do_like: bool, do_retweet: bo
 
         logger.info("Weibo精准模式: [{}] 等待页面加载完成...", time.strftime("%H:%M:%S"))
         page.wait_for_load_state("domcontentloaded")
-        time.sleep(1.0)
+        time.sleep(2.0)  # 增加等待时间确保页面完全加载
         logger.info("Weibo精准模式: [{}] ✅ 页面加载完成", time.strftime("%H:%M:%S"))
 
-        # 评论 → 赞 → 转发 → 收藏 的顺序
-        if do_comment:
-            logger.info("Weibo精准模式: [{}] 开始执行评论操作...", time.strftime("%H:%M:%S"))
-            t0 = time.perf_counter()
-            ok = False
-            txt = random_comment("")
-            logger.info("Weibo精准模式: [{}] 生成评论内容: {}", time.strftime("%H:%M:%S"), txt)
-            try:
-                # 打开评论
-                logger.debug("Weibo精准模式: [{}] 寻找评论按钮...", time.strftime("%H:%M:%S"))
-                try:
-                    cbtn = page.get_by_role("button", name=re.compile("评论|Comment", re.I)).first
-                    if cbtn and cbtn.count() > 0:
-                        logger.info("Weibo精准模式: [{}] 找到评论按钮，正在点击...", time.strftime("%H:%M:%S"))
-                        cbtn.click(); time.sleep(0.2)
-                        logger.info("Weibo精准模式: [{}] ✅ 评论按钮点击成功", time.strftime("%H:%M:%S"))
-                    else:
-                        logger.warning("Weibo精准模式: [{}] 未找到评论按钮", time.strftime("%H:%M:%S"))
-                except Exception as e:
-                    logger.warning("Weibo精准模式: [{}] 点击评论按钮失败: {}", time.strftime("%H:%M:%S"), str(e))
-                # 定位输入框
-                logger.debug("Weibo精准模式: [{}] 寻找评论输入框...", time.strftime("%H:%M:%S"))
-                sel_textboxes = ["#comment-textarea", "textarea", "[role='textbox']"]
-                box = None
-                for i, sel in enumerate(sel_textboxes):
-                    try:
-                        logger.debug("Weibo精准模式: [{}] 尝试选择器 {}/{}: {}", time.strftime("%H:%M:%S"), i+1, len(sel_textboxes), sel)
-                        loc = page.locator(sel).first
-                        if loc and loc.count() > 0:
-                            logger.info("Weibo精准模式: [{}] ✅ 找到评论输入框: {}", time.strftime("%H:%M:%S"), sel)
-                            box = loc; break
-                    except Exception as e:
-                        logger.debug("Weibo精准模式: [{}] 选择器失败: {} - {}", time.strftime("%H:%M:%S"), sel, str(e))
-                        continue
-                if not box:
-                    logger.error("Weibo精准模式: [{}] ❌ 评论输入框未找到", time.strftime("%H:%M:%S"))
-                    raise RuntimeError("评论输入框未找到")
+        # 使用统一的自动化函数执行操作
+        logger.info("Weibo精准模式: [{}] 开始执行统一自动化操作...", time.strftime("%H:%M:%S"))
+        try:
+            # 调用统一的automate_on_post函数
+            result = wb_automate_on_post(page, do_comment=do_comment, do_like=do_like, do_repost=do_retweet, do_follow=False)
 
-                logger.info("Weibo精准模式: [{}] 正在填入评论内容...", time.strftime("%H:%M:%S"))
-                box.fill(txt)
-                logger.info("Weibo精准模式: [{}] ✅ 评论内容填入成功", time.strftime("%H:%M:%S"))
-                # 提交
-                logger.info("Weibo精准模式: [{}] 正在提交评论...", time.strftime("%H:%M:%S"))
-                submitted = False
-                try:
-                    logger.debug("Weibo精准模式: [{}] 尝试快捷键 Control+Enter...", time.strftime("%H:%M:%S"))
-                    box.press("Control+Enter"); submitted = True
-                    logger.info("Weibo精准模式: [{}] ✅ 快捷键提交成功", time.strftime("%H:%M:%S"))
-                except Exception as e:
-                    logger.debug("Weibo精准模式: [{}] 快捷键提交失败: {}", time.strftime("%H:%M:%S"), str(e))
+            # 检查操作结果
+            operations_success = []
+            if do_comment and result.get("comment_executed"):
+                operations_success.append("评论")
+            if do_like and result.get("like_executed"):
+                operations_success.append("点赞")
+            if do_retweet and result.get("repost_executed"):
+                operations_success.append("转发")
 
-                if not submitted:
-                    logger.info("Weibo精准模式: [{}] 尝试点击提交按钮...", time.strftime("%H:%M:%S"))
-                    submit_selectors = [
-                        "button:has-text('发布')",
-                        "button:has-text('确定')",
-                        "button:has-text('评论')",
-                        "[role=button][aria-label*='发布']",
-                    ]
-                    for i, bsel in enumerate(submit_selectors):
-                        try:
-                            logger.debug("Weibo精准模式: [{}] 尝试提交按钮 {}/{}: {}", time.strftime("%H:%M:%S"), i+1, len(submit_selectors), bsel)
-                            loc = page.locator(bsel).first
-                            if loc and loc.count() > 0:
-                                loc.click(); submitted = True
-                                logger.info("Weibo精准模式: [{}] ✅ 提交按钮点击成功: {}", time.strftime("%H:%M:%S"), bsel)
-                                break
-                        except Exception as e:
-                            logger.debug("Weibo精准模式: [{}] 提交按钮失败: {} - {}", time.strftime("%H:%M:%S"), bsel, str(e))
-                            continue
-
-                ok = submitted
-                if ok:
-                    logger.info("Weibo精准模式: [{}] ✅ 评论操作成功完成", time.strftime("%H:%M:%S"))
-                else:
-                    logger.error("Weibo精准模式: [{}] ❌ 评论提交失败", time.strftime("%H:%M:%S"))
-            except Exception as e:
-                write_oplog("weibo", "comment", url, None, False, str(e))
+            if operations_success:
+                logger.info("Weibo精准模式: [{}] ✅ 操作成功: {}", time.strftime("%H:%M:%S"), ", ".join(operations_success))
+                success = True
             else:
-                write_oplog("weibo", "comment", url, txt, ok, None if ok else "submit_failed", int((time.perf_counter()-t0)*1000))
+                logger.warning("Weibo精准模式: [{}] ⚠️ 未执行任何操作", time.strftime("%H:%M:%S"))
+                success = False
 
-        if do_like:
-            logger.info("Weibo精准模式: [{}] 开始执行点赞操作...", time.strftime("%H:%M:%S"))
-            t0 = time.perf_counter()
-            ok = False
-            try:
-                like_selectors = [
-                    "button:has-text('赞')",
-                    "[role=button][aria-label*='赞']",
-                    "button[title*='赞']",
-                    "[aria-label*='Like']",
-                ]
-                for i, sel in enumerate(like_selectors):
-                    try:
-                        logger.debug("Weibo精准模式: [{}] 尝试点赞按钮 {}/{}: {}", time.strftime("%H:%M:%S"), i+1, len(like_selectors), sel)
-                        loc = page.locator(sel).first
-                        if loc and loc.count() > 0:
-                            loc.click(); ok = True
-                            logger.info("Weibo精准模式: [{}] ✅ 点赞成功: {}", time.strftime("%H:%M:%S"), sel)
-                            break
-                    except Exception as e:
-                        logger.debug("Weibo精准模式: [{}] 点赞按钮失败: {} - {}", time.strftime("%H:%M:%S"), sel, str(e))
-                        continue
+            # 记录操作日志
+            if "error" in result:
+                logger.error("Weibo精准模式: [{}] ❌ 操作失败: {}", time.strftime("%H:%M:%S"), result["error"])
+                success = False
 
-                if not ok:
-                    logger.warning("Weibo精准模式: [{}] ❌ 未找到可用的点赞按钮", time.strftime("%H:%M:%S"))
-            except Exception as e:
-                write_oplog("weibo", "like", url, None, False, str(e))
-            else:
-                write_oplog("weibo", "like", url, None, ok, None if ok else "not_found", int((time.perf_counter()-t0)*1000))
+        except Exception as e:
+            logger.error("Weibo精准模式: [{}] ❌ 统一自动化操作异常: {}", time.strftime("%H:%M:%S"), str(e))
+            success = False
 
-        if do_retweet:
-            logger.info("Weibo精准模式: [{}] 开始执行转发操作...", time.strftime("%H:%M:%S"))
-            t0 = time.perf_counter()
-            ok = False
-            try:
-                # 打开转发菜单/弹层
-                logger.debug("Weibo精准模式: [{}] 寻找转发按钮...", time.strftime("%H:%M:%S"))
-                retweet_selectors = [
-                    "button:has-text('转发')",
-                    "[role=button][aria-label*='转发']",
-                    "button:has-text('Repost')",
-                    "button:has-text('分享')",
-                ]
-                retweet_clicked = False
-                for i, sel in enumerate(retweet_selectors):
-                    try:
-                        logger.debug("Weibo精准模式: [{}] 尝试转发按钮 {}/{}: {}", time.strftime("%H:%M:%S"), i+1, len(retweet_selectors), sel)
-                        loc = page.locator(sel).first
-                        if loc and loc.count() > 0:
-                            loc.click(); time.sleep(0.4)
-                            logger.info("Weibo精准模式: [{}] ✅ 转发按钮点击成功: {}", time.strftime("%H:%M:%S"), sel)
-                            retweet_clicked = True
-                            break
-                    except Exception as e:
-                        logger.debug("Weibo精准模式: [{}] 转发按钮失败: {} - {}", time.strftime("%H:%M:%S"), sel, str(e))
-                        continue
+        # 处理收藏操作（如果需要）
 
-                if retweet_clicked:
-                    # 点击发布/确定
-                    logger.debug("Weibo精准模式: [{}] 寻找发布按钮...", time.strftime("%H:%M:%S"))
-                    publish_selectors = [
-                        "button:has-text('发布')",
-                        "button:has-text('确定')",
-                        "[role=button][aria-label*='发布']",
-                        "[role=button][aria-label*='确定']",
-                    ]
-                    for i, sel in enumerate(publish_selectors):
-                        try:
-                            logger.debug("Weibo精准模式: [{}] 尝试发布按钮 {}/{}: {}", time.strftime("%H:%M:%S"), i+1, len(publish_selectors), sel)
-                            loc = page.locator(sel).first
-                            if loc and loc.count() > 0:
-                                loc.click(); ok = True
-                                logger.info("Weibo精准模式: [{}] ✅ 转发发布成功: {}", time.strftime("%H:%M:%S"), sel)
-                                break
-                        except Exception as e:
-                            logger.debug("Weibo精准模式: [{}] 发布按钮失败: {} - {}", time.strftime("%H:%M:%S"), sel, str(e))
-                            continue
-                else:
-                    logger.warning("Weibo精准模式: [{}] ❌ 未找到转发按钮", time.strftime("%H:%M:%S"))
-                if not ok:
-                    logger.warning("Weibo精准模式: [{}] ❌ 转发操作失败", time.strftime("%H:%M:%S"))
-                    # 兜底：评论面板切换转发开关
-                    try:
-                        page.keyboard.press("Escape")
-                    except Exception:
-                        pass
-            except Exception as e:
-                write_oplog("weibo", "retweet", url, None, False, str(e))
-                logger.error("Weibo精准模式: [{}] 转发操作异常: {}", time.strftime("%H:%M:%S"), str(e))
-            else:
-                write_oplog("weibo", "retweet", url, None, ok, None if ok else "not_found", int((time.perf_counter()-t0)*1000))
+
 
         # 收藏功能
         if do_collect:
